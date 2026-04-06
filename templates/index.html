@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>试卷切题助手 - 免费在线PDF切分工具</title>
+    <meta name="description" content="免费在线试卷切题工具，支持双面打印试卷PDF处理，自动去除密封线，分栏输出A4打印版，无需安装软件。">
+    <meta name="keywords" content="PDF切分,试卷处理,密封线去除,分栏打印,试卷切题,PDF工具,在线PDF处理">
+    <meta name="author" content="试卷切题助手">
+    <meta name="robots" content="index, follow">
+
+    <!-- Open Graph / 社交分享 -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="试卷切题助手 - 免费在线PDF切分工具">
+    <meta property="og:description" content="上传双面打印的试卷PDF，自动去除密封线并分栏输出A4打印版">
+    <meta property="og:locale" content="zh_CN">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="试卷切题助手">
+    <meta name="twitter:description" content="免费在线试卷切题工具，自动去除密封线，分栏输出A4打印版">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        h1 { text-align: center; color: #333; margin-bottom: 20px; }
+        .controls { background: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+        .btn-primary { background: #1976d2; color: white; }
+        .btn-primary:hover { background: #1565c0; }
+        .btn-success { background: #43a047; color: white; }
+        .btn-success:hover { background: #388e3c; }
+        .btn-sm { padding: 6px 12px; font-size: 13px; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .radio-group { display: flex; gap: 12px; align-items: center; }
+        .radio-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 14px; }
+        #fileInput { display: none; }
+        .info { color: #666; font-size: 14px; }
+        
+        .zoom-controls { display: flex; align-items: center; gap: 8px; background: #f0f0f0; padding: 5px 10px; border-radius: 6px; }
+        .zoom-controls span { font-size: 13px; min-width: 45px; text-align: center; }
+        
+        .adjust-panel { background: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 15px; display: none; }
+        .adjust-panel.show { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+        .adjust-panel label { font-size: 13px; display: flex; align-items: center; gap: 5px; }
+        .adjust-panel input[type="number"] { width: 70px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .adjust-hint { color: #666; font-size: 12px; }
+        
+        .canvas-container { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; }
+        .canvas-scroll { overflow: auto; max-height: 70vh; position: relative; }
+        .canvas-wrapper { position: relative; display: inline-block; }
+        #pdfCanvas { display: block; }
+        #selectionCanvas { position: absolute; top: 0; left: 0; z-index: 10; cursor: crosshair; }
+        
+        .hint { text-align: center; color: #1976d2; padding: 10px; font-size: 14px; background: #e3f2fd; }
+        .result { margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; text-align: center; display: none; }
+        .result.show { display: block; }
+        
+        .handle { position: absolute; width: 12px; height: 12px; background: white; border: 2px solid #1976d2; border-radius: 2px; cursor: pointer; z-index: 10; }
+        .handle-nw { cursor: nw-resize; }
+        .handle-ne { cursor: ne-resize; }
+        .handle-sw { cursor: sw-resize; }
+        .handle-se { cursor: se-resize; }
+        .handle-n, .handle-s { cursor: ns-resize; width: 20px; }
+        .handle-e, .handle-w { cursor: ew-resize; height: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>试卷切题助手</h1>
+        
+        <div class="controls">
+            <input type="file" id="fileInput" accept=".pdf">
+            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">打开PDF</button>
+            <span class="info" id="fileInfo">未加载文件</span>
+            
+            <div class="zoom-controls" id="zoomControls" style="display:none;">
+                <button class="btn btn-sm" onclick="changeZoom(-0.25)">−</button>
+                <span id="zoomLevel">100%</span>
+                <button class="btn btn-sm" onclick="changeZoom(0.25)">+</button>
+                <button class="btn btn-sm" onclick="fitToWidth()">适应宽度</button>
+            </div>
+            
+            <div class="radio-group">
+                <span>切分:</span>
+                <label><input type="radio" name="cols" value="1"> 1栏</label>
+                <label><input type="radio" name="cols" value="2" checked> 2栏</label>
+                <label><input type="radio" name="cols" value="3"> 3栏</label>
+            </div>
+            
+            <button class="btn btn-success" id="processBtn" onclick="processPDF()" disabled>生成A4打印版</button>
+        </div>
+        
+        <div class="adjust-panel" id="adjustPanel">
+            <span style="font-weight:500;">微调选区:</span>
+            <label>X: <input type="number" id="adjX" onchange="updateFromInputs()"></label>
+            <label>Y: <input type="number" id="adjY" onchange="updateFromInputs()"></label>
+            <label>宽: <input type="number" id="adjW" onchange="updateFromInputs()"></label>
+            <label>高: <input type="number" id="adjH" onchange="updateFromInputs()"></label>
+            <span class="adjust-hint">（PDF坐标，可直接输入数值调整）</span>
+        </div>
+        
+        <div class="canvas-container" id="canvasContainer" style="display:none;">
+            <div class="hint">鼠标框选区域，拖动角/边调整大小，或在上方输入精确坐标</div>
+            <div class="canvas-scroll" id="canvasScroll">
+                <div class="canvas-wrapper" id="canvasWrapper">
+                    <canvas id="pdfCanvas"></canvas>
+                    <canvas id="selectionCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <div class="result" id="result">
+            <p id="resultText"></p>
+            <button class="btn btn-primary" id="downloadBtn" style="margin-top:10px;">下载PDF</button>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        let fileId = null;
+        let pdfDoc = null;
+        let pdfPage = null;
+        let pageWidth = 0, pageHeight = 0;
+        let scale = 1.0;
+        let baseScale = 1.0;
+        
+        let selection = { x: 0, y: 0, w: 0, h: 0 };
+        let isSelecting = false;
+        let isDragging = false;
+        let dragType = null;
+        let dragStart = { x: 0, y: 0 };
+        let selStart = { x: 0, y: 0, w: 0, h: 0 };
+        
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const selCanvas = document.getElementById('selectionCanvas');
+        const pdfCtx = pdfCanvas.getContext('2d');
+        const selCtx = selCanvas.getContext('2d');
+        
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const res = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await res.json();
+                
+                if (data.error) { alert(data.error); return; }
+                
+                fileId = data.file_id;
+                pageWidth = data.page_width;
+                pageHeight = data.page_height;
+                
+                document.getElementById('fileInfo').textContent = file.name;
+                
+                const pdfData = await fetch(`/pdf/${fileId}`).then(r => r.arrayBuffer());
+                pdfDoc = await pdfjsLib.getDocument({ data: pdfData }).promise;
+                pdfPage = await pdfDoc.getPage(1);
+                
+                document.getElementById('zoomControls').style.display = 'flex';
+                document.getElementById('canvasContainer').style.display = 'block';
+                
+                requestAnimationFrame(() => {
+                    fitToWidth();
+                    
+                    selection = { 
+                        x: pageWidth * 0.15,
+                        y: 10,
+                        w: pageWidth * 0.83,
+                        h: pageHeight - 20
+                    };
+                    document.getElementById('processBtn').disabled = false;
+                    document.getElementById('adjustPanel').classList.add('show');
+                    updateInputs();
+                });
+                
+            } catch (err) {
+                alert('加载失败: ' + err.message);
+            }
+        });
+        
+        function fitToWidth() {
+            const container = document.getElementById('canvasScroll');
+            const targetWidth = container.clientWidth - 40;
+            scale = targetWidth / pageWidth;
+            baseScale = scale;
+            renderPage();
+        }
+        
+        function changeZoom(delta) {
+            scale = Math.max(0.5, Math.min(3, scale + delta));
+            renderPage();
+        }
+        
+        async function renderPage() {
+            const viewport = pdfPage.getViewport({ scale });
+            
+            pdfCanvas.width = viewport.width;
+            pdfCanvas.height = viewport.height;
+            selCanvas.width = viewport.width;
+            selCanvas.height = viewport.height;
+            
+            await pdfPage.render({ canvasContext: pdfCtx, viewport }).promise;
+            
+            document.getElementById('zoomLevel').textContent = Math.round(scale / baseScale * 100) + '%';
+            
+            drawSelection();
+            setupInteraction();
+        }
+        
+        function setupInteraction() {
+            selCanvas.style.pointerEvents = 'auto';
+            
+            selCanvas.onmousedown = (e) => {
+                e.preventDefault();
+                const rect = selCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                const handle = getHandleAt(x, y);
+                if (handle) {
+                    isDragging = true;
+                    dragType = handle;
+                    dragStart = { x, y };
+                    selStart = { ...selection };
+                    return;
+                }
+                
+                if (isInsideSelection(x, y)) {
+                    isDragging = true;
+                    dragType = 'move';
+                    dragStart = { x, y };
+                    selStart = { ...selection };
+                    return;
+                }
+                
+                isSelecting = true;
+                selection.x = x / scale;
+                selection.y = y / scale;
+                selection.w = 0;
+                selection.h = 0;
+            };
+            
+            selCanvas.onmousemove = (e) => {
+                const rect = selCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                if (isSelecting) {
+                    selection.w = x / scale - selection.x;
+                    selection.h = y / scale - selection.y;
+                    drawSelection();
+                    updateInputs();
+                } else if (isDragging) {
+                    const dx = (x - dragStart.x) / scale;
+                    const dy = (y - dragStart.y) / scale;
+                    
+                    if (dragType === 'move') {
+                        selection.x = Math.max(0, Math.min(pageWidth - Math.abs(selStart.w), selStart.x + dx));
+                        selection.y = Math.max(0, Math.min(pageHeight - Math.abs(selStart.h), selStart.y + dy));
+                    } else {
+                        resizeSelection(dragType, dx, dy);
+                    }
+                    drawSelection();
+                    updateInputs();
+                } else {
+                    updateCursor(x, y);
+                }
+            };
+            
+            selCanvas.onmouseup = () => {
+                if (isSelecting || isDragging) {
+                    normalizeSelection();
+                    drawSelection();
+                    updateInputs();
+                    if (selection.w > 10 && selection.h > 10) {
+                        document.getElementById('processBtn').disabled = false;
+                        document.getElementById('adjustPanel').classList.add('show');
+                    }
+                }
+                isSelecting = false;
+                isDragging = false;
+                dragType = null;
+            };
+            
+            selCanvas.onmouseleave = () => {
+                if (isSelecting || isDragging) {
+                    normalizeSelection();
+                }
+                isSelecting = false;
+                isDragging = false;
+            };
+        }
+        
+        function normalizeSelection() {
+            if (selection.w < 0) {
+                selection.x += selection.w;
+                selection.w = -selection.w;
+            }
+            if (selection.h < 0) {
+                selection.y += selection.h;
+                selection.h = -selection.h;
+            }
+        }
+        
+        function resizeSelection(type, dx, dy) {
+            switch(type) {
+                case 'nw':
+                    selection.x = selStart.x + dx;
+                    selection.y = selStart.y + dy;
+                    selection.w = selStart.w - dx;
+                    selection.h = selStart.h - dy;
+                    break;
+                case 'ne':
+                    selection.y = selStart.y + dy;
+                    selection.w = selStart.w + dx;
+                    selection.h = selStart.h - dy;
+                    break;
+                case 'sw':
+                    selection.x = selStart.x + dx;
+                    selection.w = selStart.w - dx;
+                    selection.h = selStart.h + dy;
+                    break;
+                case 'se':
+                    selection.w = selStart.w + dx;
+                    selection.h = selStart.h + dy;
+                    break;
+                case 'n':
+                    selection.y = selStart.y + dy;
+                    selection.h = selStart.h - dy;
+                    break;
+                case 's':
+                    selection.h = selStart.h + dy;
+                    break;
+                case 'w':
+                    selection.x = selStart.x + dx;
+                    selection.w = selStart.w - dx;
+                    break;
+                case 'e':
+                    selection.w = selStart.w + dx;
+                    break;
+            }
+        }
+        
+        function getHandleAt(mx, my) {
+            if (selection.w < 10 || selection.h < 10) return null;
+            
+            const x = selection.x * scale;
+            const y = selection.y * scale;
+            const w = selection.w * scale;
+            const h = selection.h * scale;
+            const s = 8;
+            
+            if (Math.abs(mx - x) < s && Math.abs(my - y) < s) return 'nw';
+            if (Math.abs(mx - (x + w)) < s && Math.abs(my - y) < s) return 'ne';
+            if (Math.abs(mx - x) < s && Math.abs(my - (y + h)) < s) return 'sw';
+            if (Math.abs(mx - (x + w)) < s && Math.abs(my - (y + h)) < s) return 'se';
+            if (Math.abs(my - y) < s && mx > x + s && mx < x + w - s) return 'n';
+            if (Math.abs(my - (y + h)) < s && mx > x + s && mx < x + w - s) return 's';
+            if (Math.abs(mx - x) < s && my > y + s && my < y + h - s) return 'w';
+            if (Math.abs(mx - (x + w)) < s && my > y + s && my < y + h - s) return 'e';
+            
+            return null;
+        }
+        
+        function isInsideSelection(mx, my) {
+            const x = selection.x * scale;
+            const y = selection.y * scale;
+            const w = selection.w * scale;
+            const h = selection.h * scale;
+            return mx > x + 8 && mx < x + w - 8 && my > y + 8 && my < y + h - 8;
+        }
+        
+        function updateCursor(mx, my) {
+            const handle = getHandleAt(mx, my);
+            if (handle) {
+                const cursors = { nw: 'nw-resize', ne: 'ne-resize', sw: 'sw-resize', se: 'se-resize', n: 'n-resize', s: 's-resize', e: 'e-resize', w: 'w-resize' };
+                selCanvas.style.cursor = cursors[handle];
+            } else if (isInsideSelection(mx, my)) {
+                selCanvas.style.cursor = 'move';
+            } else {
+                selCanvas.style.cursor = 'crosshair';
+            }
+        }
+        
+        function drawSelection() {
+            selCtx.clearRect(0, 0, selCanvas.width, selCanvas.height);
+            
+            if (selection.w === 0 && selection.h === 0) return;
+            
+            const x = selection.x * scale;
+            const y = selection.y * scale;
+            const w = selection.w * scale;
+            const h = selection.h * scale;
+            
+            selCtx.fillStyle = 'rgba(25, 118, 210, 0.1)';
+            selCtx.fillRect(x, y, w, h);
+            
+            selCtx.strokeStyle = '#1976d2';
+            selCtx.lineWidth = 2;
+            selCtx.strokeRect(x, y, w, h);
+            
+            const cols = parseInt(document.querySelector('input[name="cols"]:checked').value);
+            if (cols > 1 && Math.abs(w) > 10) {
+                selCtx.setLineDash([5, 5]);
+                selCtx.strokeStyle = '#f44336';
+                const step = w / cols;
+                for (let i = 1; i < cols; i++) {
+                    const lineX = x + step * i;
+                    selCtx.beginPath();
+                    selCtx.moveTo(lineX, y);
+                    selCtx.lineTo(lineX, y + h);
+                    selCtx.stroke();
+                }
+                selCtx.setLineDash([]);
+            }
+            
+            if (Math.abs(w) > 20 && Math.abs(h) > 20) {
+                selCtx.fillStyle = 'white';
+                selCtx.strokeStyle = '#1976d2';
+                selCtx.lineWidth = 2;
+                const hs = 5;
+                
+                [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].forEach(([hx, hy]) => {
+                    selCtx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
+                    selCtx.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2);
+                });
+                
+                [[x + w/2, y], [x + w/2, y + h], [x, y + h/2], [x + w, y + h/2]].forEach(([hx, hy]) => {
+                    selCtx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
+                    selCtx.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2);
+                });
+            }
+        }
+        
+        function updateInputs() {
+            document.getElementById('adjX').value = Math.round(selection.x);
+            document.getElementById('adjY').value = Math.round(selection.y);
+            document.getElementById('adjW').value = Math.round(Math.abs(selection.w));
+            document.getElementById('adjH').value = Math.round(Math.abs(selection.h));
+        }
+        
+        function updateFromInputs() {
+            selection.x = parseFloat(document.getElementById('adjX').value) || 0;
+            selection.y = parseFloat(document.getElementById('adjY').value) || 0;
+            selection.w = parseFloat(document.getElementById('adjW').value) || 0;
+            selection.h = parseFloat(document.getElementById('adjH').value) || 0;
+            drawSelection();
+            
+            if (selection.w > 10 && selection.h > 10) {
+                document.getElementById('processBtn').disabled = false;
+            }
+        }
+        
+        document.querySelectorAll('input[name="cols"]').forEach(radio => {
+            radio.addEventListener('change', drawSelection);
+        });
+        
+        async function processPDF() {
+            const cols = parseInt(document.querySelector('input[name="cols"]:checked').value);
+            
+            normalizeSelection();
+            
+            try {
+                const res = await fetch('/process', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_id: fileId,
+                        x0: selection.x,
+                        y0: selection.y,
+                        x1: selection.x + selection.w,
+                        y1: selection.y + selection.h,
+                        cols
+                    })
+                });
+                
+                const data = await res.json();
+                if (data.error) { alert(data.error); return; }
+                
+                alert(`处理完成！已生成 ${data.page_count} 页 A4 文档，即将下载...`);
+                window.location.href = `/download/${data.output_id}`;
+                
+            } catch (err) {
+                alert('处理失败: ' + err.message);
+            }
+        }
+    </script>
+</body>
+</html>
