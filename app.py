@@ -13,6 +13,12 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
 UPLOAD_FOLDER = tempfile.mkdtemp()
 
+# A4 尺寸: 595 x 842 点 (约 210mm x 297mm)
+A4_WIDTH = 595
+A4_HEIGHT = 842
+PAGE_MARGIN = 20  # A4 页面四周留白 (点)
+RENDER_ZOOM = 3.0  # 栅格化倍率 (约 216 DPI), 越大越清晰但文件越大
+
 
 def cleanup_upload_folder():
     """清理临时上传目录"""
@@ -99,6 +105,29 @@ def get_pdf(file_id):
     return send_file(str(filepath), mimetype='application/pdf')
 
 
+def fit_rect_in_a4(clip_rect: fitz.Rect) -> fitz.Rect:
+    """
+    计算保持宽高比、居中放置在 A4 页面上的目标矩形。
+    避免直接拉伸到整页导致内容变形。
+    """
+    clip_w = clip_rect.width
+    clip_h = clip_rect.height
+
+    avail_w = A4_WIDTH - 2 * PAGE_MARGIN
+    avail_h = A4_HEIGHT - 2 * PAGE_MARGIN
+
+    # 等比缩放，取较小的缩放系数以完整放入可用区域
+    scale = min(avail_w / clip_w, avail_h / clip_h)
+    draw_w = clip_w * scale
+    draw_h = clip_h * scale
+
+    # 居中
+    tx = (A4_WIDTH - draw_w) / 2
+    ty = (A4_HEIGHT - draw_h) / 2
+
+    return fitz.Rect(tx, ty, tx + draw_w, ty + draw_h)
+
+
 @app.route('/process', methods=['POST'])
 def process_pdf():
     data = request.json
@@ -132,8 +161,6 @@ def process_pdf():
     try:
         with fitz.open(str(filepath)) as doc:
             with fitz.open() as out_doc:
-                total_width = x1 - x0
-
                 for page in doc:
                     page_width = page.rect.width
                     page_num = page.number + 1
@@ -148,14 +175,25 @@ def process_pdf():
                     curr_total_width = curr_x1 - curr_x0
                     curr_col_width = curr_total_width / num_cols
 
+                    mat = fitz.Matrix(RENDER_ZOOM, RENDER_ZOOM)
+
                     for i in range(num_cols):
                         sub_x0 = curr_x0 + (i * curr_col_width)
                         sub_x1 = sub_x0 + curr_col_width
                         sub_rect = fitz.Rect(sub_x0, y0, sub_x1, y1)
 
-                        # A4 尺寸: 595 x 842 点 (约 210mm x 297mm)
-                        new_page = out_doc.new_page(width=595, height=842)
-                        new_page.show_pdf_page(new_page.rect, doc, page.number, clip=sub_rect)
+                        # 栅格化选区: get_pixmap 会遵循页面的显示旋转(/Rotate),
+                        # 且 clip 坐标与前端预览(pdf.js)一致, 避免输出被旋转/错位。
+                        pix = page.get_pixmap(matrix=mat, clip=sub_rect)
+                        img_bytes = pix.tobytes("png")
+
+                        new_page = out_doc.new_page(width=A4_WIDTH, height=A4_HEIGHT)
+
+                        # 按图片实际宽高比居中放置, 避免拉伸变形
+                        target_rect = fit_rect_in_a4(
+                            fitz.Rect(0, 0, pix.width, pix.height)
+                        )
+                        new_page.insert_image(target_rect, stream=img_bytes)
 
                 output_id = str(uuid.uuid4())
                 output_path = Path(UPLOAD_FOLDER) / f"{output_id}_output.pdf"
@@ -181,7 +219,9 @@ def download_pdf(output_id):
     if not filepath.exists():
         return jsonify({'error': '文件不存在'}), 404
 
-    return send_file(str(filepath), as_attachment=True, download_name='试卷_A4打印版.pdf')
+    return send_file(
+        str(filepath), as_attachment=True, download_name='试卷_A4打印版.pdf'
+    )
 
 
 if __name__ == '__main__':
