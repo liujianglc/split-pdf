@@ -8,3 +8,14 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.0
     plan: free
+
+jobs:
+  - type: cron
+    name: keep-alive
+    schedule: "*/5 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python keep_alive.py
+    envVars:
+      - key: SELF_URL
+        value: https://split-pdf-t3vh.onrender.com
+    plan: free
