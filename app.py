@@ -8,9 +8,11 @@ from pathlib import Path
 
 import fitz
 from flask import Flask, jsonify, render_template, request, send_file
+from flask_cors import CORS
 
 
 app = Flask(__name__)
+CORS(app)
 
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 

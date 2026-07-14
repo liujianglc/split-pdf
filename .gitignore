@@ -28,3 +28,11 @@ Thumbs.db
 # Temp files
 *.tmp
 *.temp
+
+# Node.js / Next.js
+node_modules/
+.next/
+web/node_modules/
+web/.next/
+web/out/
+npm-debug.log*
