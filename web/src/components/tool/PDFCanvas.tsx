@@ -89,7 +89,7 @@ export default function PDFCanvas({ fileId, pageWidth, pageHeight, selection, co
         sc.width = viewport.width
         sc.height = viewport.height
 
-        await page.render({ canvas: canvas, viewport }).promise
+        await page.render({ canvasContext: ctx, viewport }).promise
         setPdfLoaded(true)
         drawSelection()
       } catch (err) {

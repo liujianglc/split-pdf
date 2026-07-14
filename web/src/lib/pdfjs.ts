@@ -1,16 +1,19 @@
-let pdfjsLib: typeof import('pdfjs-dist') | null = null
-let loadingPromise: Promise<typeof import('pdfjs-dist')> | null = null
+const PDFJS_VERSION = '3.11.174'
 
-export async function getPDFJS(): Promise<typeof import('pdfjs-dist')> {
-  if (pdfjsLib) return pdfjsLib
-  if (!loadingPromise) {
-    loadingPromise = (async () => {
-      const pdfjs = await import('pdfjs-dist')
-      pdfjs.GlobalWorkerOptions.workerSrc =
-        `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
-      pdfjsLib = pdfjs
-      return pdfjs
-    })()
-  }
-  return loadingPromise
+export function getPDFJS(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).pdfjsLib) {
+      resolve((window as any).pdfjsLib)
+      return
+    }
+    const script = document.createElement('script')
+    script.src = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`
+    script.onload = () => {
+      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+        `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`
+      resolve((window as any).pdfjsLib)
+    }
+    script.onerror = reject
+    document.head.appendChild(script)
+  })
 }
