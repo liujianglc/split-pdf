@@ -1,6 +1,7 @@
 import atexit
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -28,6 +29,12 @@ PAGE_MARGIN = 20
 
 # 栅格化倍率 (约 216 DPI)。越大越清晰但文件越大, 打印可用 3~4。
 RENDER_ZOOM = 3.0
+
+PROCESS_TIMEOUT = 300
+
+# 异步任务进度
+_tasks = {}
+_tasks_lock = threading.Lock()
 
 
 # =========================
@@ -60,6 +67,16 @@ def cleanup_expired_files():
 
         except:
             pass
+
+    with _tasks_lock:
+        expired = [
+            tid
+            for tid, t in _tasks.items()
+            if now - t["created_at"] > FILE_TTL_SECONDS
+            and t["status"] in ("done", "error", "timeout")
+        ]
+        for tid in expired:
+            del _tasks[tid]
 
 
 
@@ -338,6 +355,65 @@ def get_pdf(fid):
 # =========================
 
 
+def _process_task(
+    task_id, pdf_path, x0, y0, x1, y1, cols
+):
+    try:
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "running"
+
+        with fitz.open(pdf_path) as doc:
+            total_pages = len(doc)
+            total_steps = total_pages * cols
+
+            with _tasks_lock:
+                _tasks[task_id]["total_steps"] = total_steps
+
+            with fitz.open() as out:
+                for page in doc:
+                    page_width = page.rect.width
+                    page_num = page.number + 1
+
+                    if page_num % 2 == 1:
+                        px0, px1 = x0, x1
+                    else:
+                        px0 = page_width - x1
+                        px1 = page_width - x0
+
+                    py0, py1 = y0, y1
+                    total_width = px1 - px0
+                    col_width = total_width / cols
+
+                    for i in range(cols):
+                        cx0 = px0 + i * col_width
+                        cx1 = cx0 + col_width
+                        rect = fitz.Rect(cx0, py0, cx1, py1)
+                        add_clip_page(out, doc, page, rect)
+
+                        with _tasks_lock:
+                            _tasks[task_id]["current_step"] += 1
+                            pct = round(
+                                _tasks[task_id]["current_step"] / total_steps * 100, 1
+                            )
+                            _tasks[task_id]["progress"] = pct
+
+                out_id = str(uuid.uuid4())
+                out_path = Path(UPLOAD_FOLDER) / f"{out_id}_output.pdf"
+                page_count = len(out)
+                out.save(out_path)
+
+                with _tasks_lock:
+                    _tasks[task_id]["status"] = "done"
+                    _tasks[task_id]["output_id"] = out_id
+                    _tasks[task_id]["page_count"] = page_count
+                    _tasks[task_id]["progress"] = 100.0
+
+    except Exception as e:
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "error"
+            _tasks[task_id]["error"] = str(e)
+
+
 @app.route(
     "/process",
     methods=["POST"]
@@ -413,119 +489,52 @@ def process_pdf():
 
 
 
+    task_id = str(uuid.uuid4())
+    with _tasks_lock:
+        _tasks[task_id] = {
+            "status": "pending",
+            "progress": 0.0,
+            "total_steps": 0,
+            "current_step": 0,
+            "output_id": None,
+            "page_count": 0,
+            "error": None,
+            "timeout_at": time.time() + PROCESS_TIMEOUT,
+            "created_at": time.time(),
+        }
+
+    t = threading.Thread(
+        target=_process_task,
+        args=(task_id, str(pdf_path), x0, y0, x1, y1, cols),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify({"task_id": task_id})
 
 
-    try:
+@app.route(
+    "/progress/<task_id>"
+)
+def get_progress(task_id):
 
+    with _tasks_lock:
+        task = _tasks.get(task_id)
 
-        with fitz.open(pdf_path) as doc:
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
 
+    if task["status"] == "running" and time.time() > task["timeout_at"]:
+        with _tasks_lock:
+            task["status"] = "timeout"
 
-            with fitz.open() as out:
-
-
-
-                for page in doc:
-
-                    page_width = page.rect.width
-                    page_num = page.number + 1
-
-                    # 奇数页密封线在左边，偶数页镜像处理
-                    if page_num % 2 == 1:
-                        px0, px1 = x0, x1
-                    else:
-                        px0 = page_width - x1
-                        px1 = page_width - x0
-
-                    py0=y0
-                    py1=y1
-
-
-
-
-                    total_width=px1-px0
-
-
-                    col_width=(
-                        total_width/cols
-                    )
-
-
-
-                    for i in range(cols):
-
-
-                        cx0=(
-                            px0+
-                            i*col_width
-                        )
-
-                        cx1=(
-                            cx0+
-                            col_width
-                        )
-
-
-
-                        rect=fitz.Rect(
-
-                            cx0,
-                            py0,
-                            cx1,
-                            py1
-
-                        )
-
-
-
-                        add_clip_page(
-
-                            out,
-                            doc,
-                            page,
-                            rect
-
-                        )
-
-
-
-
-                out_id=str(uuid.uuid4())
-
-
-                out_path=Path(
-                    UPLOAD_FOLDER
-                )/f"{out_id}_output.pdf"
-
-                page_count = len(out)
-
-                out.save(
-                    out_path
-                )
-
-
-
-
-        return jsonify({
-
-            "output_id":out_id,
-
-            "page_count":page_count
-
-        })
-
-
-
-
-    except Exception as e:
-
-
-        return jsonify(
-            {
-            "error":
-            f"处理失败:{e}"
-            }
-        ),500
+    return jsonify({
+        "status": task["status"],
+        "progress": task["progress"],
+        "output_id": task["output_id"],
+        "page_count": task["page_count"],
+        "error": task["error"],
+    })
 
 
 

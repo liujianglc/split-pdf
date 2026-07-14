@@ -55,8 +55,9 @@
         #selectionCanvas { position: absolute; top: 0; left: 0; z-index: 10; cursor: crosshair; }
         
         .hint { text-align: center; color: #1976d2; padding: 10px; font-size: 14px; background: #e3f2fd; }
-        .result { margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; text-align: center; display: none; }
-        .result.show { display: block; }
+        .result { margin: 10px 0; padding: 10px 16px; background: #e8f5e9; border-radius: 8px; display: none; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .result.show { display: flex; }
+        .result span { font-size: 14px; color: #2e7d32; }
         
         .handle { position: absolute; width: 12px; height: 12px; background: white; border: 2px solid #1976d2; border-radius: 2px; cursor: pointer; z-index: 10; }
         .handle-nw { cursor: nw-resize; }
@@ -65,6 +66,17 @@
         .handle-se { cursor: se-resize; }
         .handle-n, .handle-s { cursor: ns-resize; width: 20px; }
         .handle-e, .handle-w { cursor: ew-resize; height: 20px; }
+        
+        .progress-container { display: none; align-items: center; gap: 12px; margin: 10px 0; background: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .progress-container.show { display: flex; }
+        .progress-bar-bg { flex: 1; height: 20px; background: #e0e0e0; border-radius: 10px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; background: linear-gradient(90deg, #43a047, #66bb6a); border-radius: 10px; transition: width 0.3s ease; width: 0%; }
+        .progress-text { font-size: 14px; color: #333; min-width: 40px; text-align: right; white-space: nowrap; }
+        
+        .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); color: white; padding: 12px 24px; border-radius: 8px; z-index: 1000; opacity: 0; transition: opacity 0.3s; pointer-events: none; font-size: 14px; max-width: 80vw; text-align: center; }
+        .toast.show { opacity: 1; pointer-events: auto; }
+        .toast.error { background: #d32f2f; }
+        .toast.success { background: #388e3c; }
     </style>
 </head>
 <body>
@@ -93,6 +105,19 @@
             <button class="btn btn-success" id="processBtn" onclick="processPDF()" disabled>生成A4打印版</button>
         </div>
         
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progressFill"></div>
+            </div>
+            <span class="progress-text" id="progressText">0%</span>
+        </div>
+        
+        <div class="result" id="result">
+            <span id="resultText"></span>
+            <button class="btn btn-success btn-sm" id="downloadBtn" onclick="downloadResult()">重新下载</button>
+            <button class="btn btn-primary btn-sm" id="resetBtn" onclick="resetResult()">继续切题</button>
+        </div>
+        
         <div class="adjust-panel" id="adjustPanel">
             <span style="font-weight:500;">微调选区:</span>
             <label>X: <input type="number" id="adjX" onchange="updateFromInputs()"></label>
@@ -112,10 +137,7 @@
             </div>
         </div>
         
-        <div class="result" id="result">
-            <p id="resultText"></p>
-            <button class="btn btn-primary" id="downloadBtn" style="margin-top:10px;">下载PDF</button>
-        </div>
+        <div id="toast" class="toast"></div>
     </div>
 
     <script>
@@ -135,14 +157,50 @@
         let dragStart = { x: 0, y: 0 };
         let selStart = { x: 0, y: 0, w: 0, h: 0 };
         
+        let _downloadId = null;
+        let _toastTimer = null;
+        
         const pdfCanvas = document.getElementById('pdfCanvas');
         const selCanvas = document.getElementById('selectionCanvas');
         const pdfCtx = pdfCanvas.getContext('2d');
         const selCtx = selCanvas.getContext('2d');
         
+        function showToast(msg, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.className = 'toast ' + type + ' show';
+            clearTimeout(_toastTimer);
+            _toastTimer = setTimeout(() => toast.classList.remove('show'), 4000);
+        }
+        
+        function showResult(pageCount, downloadId) {
+            _downloadId = downloadId;
+            const result = document.getElementById('result');
+            document.getElementById('resultText').textContent = '处理完成！共 ' + pageCount + ' 页';
+            result.classList.add('show');
+            // 自动下载
+            downloadResult();
+        }
+        
+        function hideResult() {
+            document.getElementById('result').classList.remove('show');
+            _downloadId = null;
+        }
+        
+        function downloadResult() {
+            if (_downloadId) window.location.href = '/download/' + _downloadId;
+        }
+        
+        function resetResult() {
+            hideResult();
+            document.getElementById('processBtn').disabled = false;
+        }
+        
         document.getElementById('fileInput').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
+            
+            hideResult();
             
             const formData = new FormData();
             formData.append('file', file);
@@ -151,7 +209,7 @@
                 const res = await fetch('/upload', { method: 'POST', body: formData });
                 const data = await res.json();
                 
-                if (data.error) { alert(data.error); return; }
+                if (data.error) { showToast(data.error, 'error'); return; }
                 
                 fileId = data.file_id;
                 pageWidth = data.page_width;
@@ -159,7 +217,7 @@
                 
                 document.getElementById('fileInfo').textContent = file.name;
                 
-                const pdfData = await fetch(`/pdf/${fileId}`).then(r => r.arrayBuffer());
+                const pdfData = await fetch('/pdf/' + fileId).then(r => r.arrayBuffer());
                 pdfDoc = await pdfjsLib.getDocument({ data: pdfData }).promise;
                 pdfPage = await pdfDoc.getPage(1);
                 
@@ -181,7 +239,7 @@
                 });
                 
             } catch (err) {
-                alert('加载失败: ' + err.message);
+                showToast('加载失败: ' + err.message, 'error');
             }
         });
         
@@ -464,8 +522,14 @@
         
         async function processPDF() {
             const cols = parseInt(document.querySelector('input[name="cols"]:checked').value);
-            
             normalizeSelection();
+            
+            const btn = document.getElementById('processBtn');
+            btn.disabled = true;
+            btn.textContent = '处理中...';
+            hideResult();
+            
+            showProgress(0);
             
             try {
                 const res = await fetch('/process', {
@@ -482,14 +546,80 @@
                 });
                 
                 const data = await res.json();
-                if (data.error) { alert(data.error); return; }
+                if (data.error) {
+                    showToast(data.error, 'error');
+                    hideProgress();
+                    btn.disabled = false;
+                    btn.textContent = '生成A4打印版';
+                    return;
+                }
                 
-                alert(`处理完成！已生成 ${data.page_count} 页 A4 文档，即将下载...`);
-                window.location.href = `/download/${data.output_id}`;
+                const taskId = data.task_id;
+                
+                const poll = setInterval(async () => {
+                    try {
+                        const pres = await fetch('/progress/' + taskId);
+                        const pdata = await pres.json();
+                        
+                        if (pdata.error) {
+                            clearInterval(poll);
+                            showToast(pdata.error, 'error');
+                            hideProgress();
+                            btn.disabled = false;
+                            btn.textContent = '生成A4打印版';
+                            return;
+                        }
+                        
+                        showProgress(pdata.progress);
+                        
+                        if (pdata.status === 'done') {
+                            clearInterval(poll);
+                            hideProgress();
+                            btn.textContent = '生成A4打印版';
+                            showResult(pdata.page_count, pdata.output_id);
+                            showToast('处理完成！', 'success');
+                        } else if (pdata.status === 'error') {
+                            clearInterval(poll);
+                            hideProgress();
+                            btn.disabled = false;
+                            btn.textContent = '生成A4打印版';
+                            showToast('处理失败: ' + (pdata.error || '未知错误'), 'error');
+                        } else if (pdata.status === 'timeout') {
+                            clearInterval(poll);
+                            hideProgress();
+                            btn.disabled = false;
+                            btn.textContent = '生成A4打印版';
+                            showToast('处理超时，请重试', 'error');
+                        }
+                    } catch (err) {
+                        clearInterval(poll);
+                        hideProgress();
+                        btn.disabled = false;
+                        btn.textContent = '生成A4打印版';
+                        showToast('查询进度失败: ' + err.message, 'error');
+                    }
+                }, 500);
                 
             } catch (err) {
-                alert('处理失败: ' + err.message);
+                hideProgress();
+                btn.disabled = false;
+                btn.textContent = '生成A4打印版';
+                showToast('处理失败: ' + err.message, 'error');
             }
+        }
+        
+        function showProgress(pct) {
+            const container = document.getElementById('progressContainer');
+            const fill = document.getElementById('progressFill');
+            const text = document.getElementById('progressText');
+            container.classList.add('show');
+            fill.style.width = pct + '%';
+            text.textContent = Math.round(pct) + '%';
+        }
+        
+        function hideProgress() {
+            const container = document.getElementById('progressContainer');
+            container.classList.remove('show');
         }
     </script>
 </body>
